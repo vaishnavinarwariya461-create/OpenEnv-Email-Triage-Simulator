@@ -1,0 +1,42 @@
+name: "EmailTriageEnv"
+version: "1.0.0"
+description: "Intelligent Email Triage & Customer Support Routing System"
+author: "AI Studio Build"
+license: "MIT"
+
+environment:
+  module: "environment"
+  class: "EmailTriageEnv"
+  factory: "make"
+
+tasks:
+  - name: "EASY"
+    description: "Clear keyword-based emails"
+    difficulty: "easy"
+  - name: "MEDIUM"
+    description: "Multi-intent emails"
+    difficulty: "medium"
+  - name: "HARD"
+    description: "Ambiguous, Hinglish, emotional tone"
+    difficulty: "hard"
+
+observation_space:
+  type: "object"
+  properties:
+    email_id: { type: "string" }
+    sender: { type: "string" }
+    subject: { type: "string" }
+    body: { type: "string" }
+    step_count: { type: "integer" }
+
+action_space:
+  type: "object"
+  properties:
+    category: { type: "string", enum: ["Support", "Billing", "Technical", "Spam", "Feature Request", "Multilingual"] }
+    priority: { type: "string", enum: ["Low", "Medium", "High", "Urgent"] }
+
+reward_space:
+  type: "object"
+  properties:
+    score: { type: "number", minimum: 0.0, maximum: 1.0 }
+    feedback: { type: "string" }

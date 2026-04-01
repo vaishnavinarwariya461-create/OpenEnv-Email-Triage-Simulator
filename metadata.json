@@ -1,0 +1,5 @@
+{
+  "name": "OpenEnv: Email Triage Simulator",
+  "description": "A real-world task environment for AI agents to learn email triage, prioritization, and automated response handling following the OpenEnv specification.",
+  "requestFramePermissions": []
+}
