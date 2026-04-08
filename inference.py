@@ -12,42 +12,46 @@ parser = argparse.ArgumentParser(description="Email Triage Evaluation")
 parser.add_argument(
     "--mode",
     choices=["local", "baseline"],
-    default="baseline",
-    help="Mode: 'local' uses OpenAI GPT, 'baseline' uses default actions"
+    default="local",
 )
 args = parser.parse_args()
 MODE = args.mode
 
 # -------------------------------
-# Setup OpenAI (only if local)
+# Environment Variables (STRICT BUT SAFE)
 # -------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
-HF_TOKEN = os.getenv("HF_TOKEN")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+API_KEY = os.environ.get("API_KEY")
+API_BASE_URL = os.environ.get("API_BASE_URL")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
 
 client = None
 
+# -------------------------------
+# Setup OpenAI (NO CRASH)
+# -------------------------------
 if MODE == "local":
-    if not OPENAI_API_KEY:
-        print("No API key found. Switching to baseline mode.", flush=True)
-        MODE = "baseline"
-    else:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY, base_url=API_BASE_URL)
-        except Exception as e:
-            print(f"OpenAI init error: {e}", flush=True)
-            MODE = "baseline"
+    try:
+        from openai import OpenAI
+
+        if API_KEY and API_BASE_URL:
+            client = OpenAI(
+                api_key=API_KEY,
+                base_url=API_BASE_URL
+            )
+            print("✅ LLM Client initialized", flush=True)
+            print(f"🚨 USING BASE URL: {API_BASE_URL}", flush=True)
+            print(f"🚨 USING MODEL: {MODEL_NAME}", flush=True)
+        else:
+            print("⚠️ Missing API env vars, LLM may not work", flush=True)
+
+    except Exception as e:
+        print(f"❌ OpenAI init error: {e}", flush=True)
+        client = None
 
 # -------------------------------
-# Get action
+# Get action from LLM
 # -------------------------------
 def get_action_from_llm(obs: Observation) -> Action:
-    if MODE == "baseline" or client is None:
-        return Action(category=Category.SUPPORT, priority=Priority.LOW)
-
     prompt = f"""
 You are an intelligent email triage assistant.
 
@@ -63,38 +67,44 @@ Return ONLY JSON:
 {{"category": "Support", "priority": "Medium"}}
 """
 
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": "Return only valid JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            response_format={"type": "json_object"}
-        )
+    # Try LLM call if client exists
+    if client is not None:
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "Return only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
 
-        data = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content
+            data = json.loads(content)
 
-        category = Category(data.get("category", "Support"))
-        priority = Priority(data.get("priority", "Low"))
+            category = Category(data.get("category", "Support"))
+            priority = Priority(data.get("priority", "Low"))
 
-        return Action(category=category, priority=priority)
+            return Action(category=category, priority=priority)
 
-    except Exception as e:
-        print(f"LLM error: {e}", flush=True)
-        return Action(category=Category.SUPPORT, priority=Priority.LOW)
+        except Exception as e:
+            print(f"⚠️ LLM error: {e}", flush=True)
+
+    # Safe fallback (AFTER attempt)
+    return Action(category=Category.SUPPORT, priority=Priority.LOW)
 
 # -------------------------------
-# MAIN EVALUATION (FIXED)
+# MAIN EVALUATION
 # -------------------------------
 def run_evaluation():
     total_score = 0.0
     total_steps = 0
 
+    print("🚀 Starting Evaluation...", flush=True)
+
     for task_name, emails in TASKS.items():
         env = make(task_name=task_name)
 
-        # ✅ REQUIRED
         print(f"[START] task={task_name}", flush=True)
 
         task_score = 0.0
@@ -103,6 +113,7 @@ def run_evaluation():
         for i in range(len(emails)):
             obs = env.reset(index=i)
 
+            # 🔥 Always tries LLM first
             action = get_action_from_llm(obs)
 
             _, reward, _, _ = env.step(action)
@@ -110,12 +121,10 @@ def run_evaluation():
             step_count += 1
             task_score += reward.score
 
-            # ✅ REQUIRED
             print(f"[STEP] step={step_count} reward={reward.score}", flush=True)
 
         avg_score = task_score / len(emails) if len(emails) > 0 else 0.0
 
-        # ✅ REQUIRED
         print(f"[END] task={task_name} score={avg_score} steps={step_count}", flush=True)
 
         total_score += task_score
@@ -123,7 +132,6 @@ def run_evaluation():
 
     final_score = total_score / total_steps if total_steps > 0 else 0.0
 
-    # Optional (safe)
     print(f"FINAL_SCORE={final_score}", flush=True)
 
 # -------------------------------
@@ -133,5 +141,5 @@ if __name__ == "__main__":
     try:
         run_evaluation()
     except Exception as e:
-        print(f"Fatal error: {e}", flush=True)
+        print(f"💥 Fatal error: {e}", flush=True)
         exit(1)
