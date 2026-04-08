@@ -4,130 +4,132 @@ import argparse
 from environment import make
 from models import Action, Category, Priority, Observation
 from tasks import TASKS
-from typing import List, Dict, Any
 
-# Parse command-line argument for mode
+# -------------------------------
+# Parse arguments
+# -------------------------------
 parser = argparse.ArgumentParser(description="Email Triage Evaluation")
 parser.add_argument(
     "--mode",
     choices=["local", "baseline"],
     default="baseline",
-    help="Mode: 'local' uses OpenAI GPT, 'baseline' uses default actions for hackathon"
+    help="Mode: 'local' uses OpenAI GPT, 'baseline' uses default actions"
 )
 args = parser.parse_args()
-
 MODE = args.mode
 
 # -------------------------------
-# Setup OpenAI client only if mode=local and key exists
+# Setup OpenAI (only if local)
 # -------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
 
+client = None
+
 if MODE == "local":
     if not OPENAI_API_KEY:
-        print("Error: No OpenAI API key found. Falling back to baseline mode.")
+        print("No API key found. Switching to baseline mode.", flush=True)
         MODE = "baseline"
-
-if MODE == "local":
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY, base_url=API_BASE_URL)
-else:
-    client = None
-    print("Running in baseline mode. No API calls will be made.")
+    else:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY, base_url=API_BASE_URL)
+        except Exception as e:
+            print(f"OpenAI init error: {e}", flush=True)
+            MODE = "baseline"
 
 # -------------------------------
-# Function to get action
+# Get action
 # -------------------------------
 def get_action_from_llm(obs: Observation) -> Action:
-    """Return action from LLM if local, else baseline action."""
     if MODE == "baseline" or client is None:
         return Action(category=Category.SUPPORT, priority=Priority.LOW)
 
     prompt = f"""
-    You are an intelligent email triage assistant. Classify and prioritize emails.
+You are an intelligent email triage assistant.
 
-    Email Details:
-    Sender: {obs.sender}
-    Subject: {obs.subject}
-    Body: {obs.body}
+Email:
+Sender: {obs.sender}
+Subject: {obs.subject}
+Body: {obs.body}
 
-    Categories: Support, Billing, Technical, Spam, Feature Request, Multilingual
-    Priorities: Low, Medium, High, Urgent
+Categories: Support, Billing, Technical, Spam, Feature Request, Multilingual
+Priorities: Low, Medium, High, Urgent
 
-    Return JSON with keys 'category' and 'priority'.
-    Example: {{"category": "Support", "priority": "Medium"}}
-    """
+Return ONLY JSON:
+{{"category": "Support", "priority": "Medium"}}
+"""
+
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+                {"role": "system", "content": "Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"}
         )
-        content = response.choices[0].message.content
-        data = json.loads(content)
 
-        category_str = data.get("category", "Support")
-        priority_str = data.get("priority", "Low")
+        data = json.loads(response.choices[0].message.content)
 
-        try:
-            category = Category(category_str)
-        except ValueError:
-            category = Category.SUPPORT
-
-        try:
-            priority = Priority(priority_str)
-        except ValueError:
-            priority = Priority.LOW
+        category = Category(data.get("category", "Support"))
+        priority = Priority(data.get("priority", "Low"))
 
         return Action(category=category, priority=priority)
 
     except Exception as e:
-        print(f"Error calling LLM: {e}")
+        print(f"LLM error: {e}", flush=True)
         return Action(category=Category.SUPPORT, priority=Priority.LOW)
 
 # -------------------------------
-# Run evaluation
+# MAIN EVALUATION (FIXED)
 # -------------------------------
-def run_baseline():
-    print(f"--- Starting Baseline Evaluation (Mode={MODE}) ---")
+def run_evaluation():
     total_score = 0.0
-    task_count = 0
+    total_steps = 0
 
     for task_name, emails in TASKS.items():
-        print(f"\nEvaluating Task: {task_name}")
-        task_score = 0.0
         env = make(task_name=task_name)
+
+        # ✅ REQUIRED
+        print(f"[START] task={task_name}", flush=True)
+
+        task_score = 0.0
+        step_count = 0
 
         for i in range(len(emails)):
             obs = env.reset(index=i)
-            print(f"  Email ID: {obs.email_id}")
 
             action = get_action_from_llm(obs)
-            print(f"    Action: Category={action.category}, Priority={action.priority}")
 
-            _, reward, _, info = env.step(action)
-            print(f"    Reward: {reward.score:.2f} - {reward.feedback}")
+            _, reward, _, _ = env.step(action)
 
+            step_count += 1
             task_score += reward.score
-            task_count += 1
 
-        avg_task_score = task_score / len(emails)
-        print(f"  Average Score for {task_name}: {avg_task_score:.2f}")
+            # ✅ REQUIRED
+            print(f"[STEP] step={step_count} reward={reward.score}", flush=True)
+
+        avg_score = task_score / len(emails) if len(emails) > 0 else 0.0
+
+        # ✅ REQUIRED
+        print(f"[END] task={task_name} score={avg_score} steps={step_count}", flush=True)
+
         total_score += task_score
+        total_steps += step_count
 
-    final_avg_score = total_score / task_count
-    print(f"\n--- Evaluation Complete ---")
-    print(f"Final Average Score: {final_avg_score:.2f}")
+    final_score = total_score / total_steps if total_steps > 0 else 0.0
 
+    # Optional (safe)
+    print(f"FINAL_SCORE={final_score}", flush=True)
 
+# -------------------------------
+# ENTRY POINT
+# -------------------------------
 if __name__ == "__main__":
     try:
-        run_baseline()
+        run_evaluation()
     except Exception as e:
-        print("Fatal error:", e)
+        print(f"Fatal error: {e}", flush=True)
         exit(1)
