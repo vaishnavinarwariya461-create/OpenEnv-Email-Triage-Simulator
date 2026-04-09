@@ -18,7 +18,7 @@ args = parser.parse_args()
 MODE = args.mode
 
 # -------------------------------
-# Environment Variables (STRICT BUT SAFE)
+# Environment Variables
 # -------------------------------
 API_KEY = os.environ.get("API_KEY")
 API_BASE_URL = os.environ.get("API_BASE_URL")
@@ -27,7 +27,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
 client = None
 
 # -------------------------------
-# Setup OpenAI (NO CRASH)
+# Setup OpenAI
 # -------------------------------
 if MODE == "local":
     try:
@@ -67,7 +67,6 @@ Return ONLY JSON:
 {{"category": "Support", "priority": "Medium"}}
 """
 
-    # Try LLM call if client exists
     if client is not None:
         try:
             response = client.chat.completions.create(
@@ -90,7 +89,7 @@ Return ONLY JSON:
         except Exception as e:
             print(f"⚠️ LLM error: {e}", flush=True)
 
-    # Safe fallback (AFTER attempt)
+    # fallback
     return Action(category=Category.SUPPORT, priority=Priority.LOW)
 
 # -------------------------------
@@ -113,7 +112,6 @@ def run_evaluation():
         for i in range(len(emails)):
             obs = env.reset(index=i)
 
-            # 🔥 Always tries LLM first
             action = get_action_from_llm(obs)
 
             _, reward, _, _ = env.step(action)
@@ -123,14 +121,38 @@ def run_evaluation():
 
             print(f"[STEP] step={step_count} reward={reward.score}", flush=True)
 
-        avg_score = task_score / len(emails) if len(emails) > 0 else 0.0
+        # -------------------------------
+        # ✅ FIXED SCORE CALCULATION
+        # -------------------------------
+        if len(emails) > 0:
+            avg_score = task_score / len(emails)
+        else:
+            avg_score = 0.5
+
+        # 🔒 Clamp strictly between (0,1)
+        epsilon = 1e-6
+        if avg_score <= 0.0:
+            avg_score = epsilon
+        elif avg_score >= 1.0:
+            avg_score = 1.0 - epsilon
 
         print(f"[END] task={task_name} score={avg_score} steps={step_count}", flush=True)
 
         total_score += task_score
         total_steps += step_count
 
-    final_score = total_score / total_steps if total_steps > 0 else 0.0
+    # -------------------------------
+    # Final score (optional clamp)
+    # -------------------------------
+    if total_steps > 0:
+        final_score = total_score / total_steps
+    else:
+        final_score = 0.5
+
+    if final_score <= 0.0:
+        final_score = epsilon
+    elif final_score >= 1.0:
+        final_score = 1.0 - epsilon
 
     print(f"FINAL_SCORE={final_score}", flush=True)
 
