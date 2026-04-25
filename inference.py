@@ -20,9 +20,9 @@ MODE = args.mode
 # -------------------------------
 # Environment Variables
 # -------------------------------
-API_KEY = os.environ.get("API_KEY")
-API_BASE_URL = os.environ.get("API_BASE_URL")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
+API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("API_KEY")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-1.5-flash")
 
 client = None
 
